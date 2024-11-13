@@ -23,3 +23,12 @@ dist-ssr
 *.sln
 *.sw?
 debug.ipynb
+
+# Temp
+context_old.pdf
+context.pdf
+check_db.ipynb
+chat_history.db
+chat_app.db
+db.py
+serveo.bat
