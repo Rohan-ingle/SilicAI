@@ -1,0 +1,161 @@
+/* Basic Reset */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  
+  /* Dark Theme */
+  body {
+    background-color: #121212;
+    color: white;
+    font-family: Arial, sans-serif;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 0;
+  }
+  
+  /* Fullscreen container for the chat */
+  .chat-container {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    background-color: #121212;
+    padding: 20px;
+    border-radius: 0;
+    overflow: hidden;
+    align-items: center;
+  }
+  
+  /* Scroll to Bottom button */
+  .scroll-to-bottom {
+    position: absolute;
+    bottom: 70px; /* Adjust position to be just above the input area */
+    background-color: #4b4bff;
+    color: white;
+    border: none;
+    width: 20px;  /* Set the button width */
+    height: 20px; /* Set the button height */
+    border-radius: 50%; /* Make it circular */
+    padding: 0;
+    cursor: pointer;
+    font-size: 1rem;
+    box-shadow: none;
+    display: flex;
+    justify-content: center;
+    align-items: center; /* Center the arrow */
+    z-index: 10;
+  }
+  
+  .scroll-to-bottom svg {
+    fill: white;
+    width: 15px;
+    height: 15px;
+  }
+  
+  .chat-history {
+    overflow-y: auto;
+    flex: 1;
+    padding: 10px;
+    max-height: calc(100vh); /* Adjust for space occupied by input area and button */
+    margin-bottom: 15px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    margin-top: 0px; /* Ensure space from top */
+  }
+  
+  /* Message styling */
+  .message {
+    background-color: #333;
+    padding: 10px;
+    border-radius: 10px;
+    margin-bottom: 10px;
+    max-width: 80%;
+    word-wrap: break-word;
+  }
+  
+  /* User message styling */
+  .message.user {
+    background-color: #4b4bff;
+    align-self: flex-end;
+  }
+  
+  /* Bot message styling */
+  .message.bot {
+    background-color: #3c3c3c;
+    align-self: flex-start;
+  }
+  
+  /* Input area */
+  .chat-input {
+    display: flex;
+    align-items: center;
+    background-color: transparent;
+    padding: 0;
+    border-radius: 0;
+    position: relative;
+    width: 100%;
+    justify-content: center; /* Center both text box and send button horizontally */
+    flex-direction: row;
+  }
+  
+  /* Input box */
+  .chat-input input {
+    width: 70%;
+    padding: 10px;
+    border: none;
+    border-radius: 15px;
+    background-color: #333;
+    color: white;
+    margin-right: 10px; /* Add margin-right for consistent gap */
+  }
+  
+  /* Send button */
+  .chat-input button {
+    background-color: #4b4bff;
+    border: none;
+    padding: 10px;
+    border-radius: 15px;
+    color: white;
+    font-size: 1rem;
+    cursor: pointer;
+    box-shadow: none;
+  }
+  
+  .chat-input button:hover {
+    background-color: #3b3be1;
+  }
+  
+  /* Responsive design for mobile */
+  @media (max-width: 768px) {
+    .chat-input {
+      justify-content: center; /* Keep both the input and button centered */
+      padding: 0 10px; /* Reduce the side padding to narrow the layout */
+    }
+  
+    .chat-input input {
+      width: calc(100% - 20px); /* Make the input box take up the remaining space, minus the button width */
+      margin-right: 10px; /* Keep a small gap between the input and the button */
+    }
+  
+    .chat-input button {
+      width: 70px; /* Keep button width fixed */
+      font-size: 1rem;
+      padding: 8px;
+    }
+    .chat-container {
+      padding: 10px; /* Reduce container padding for mobile */
+    }
+  
+    .chat-history {
+      max-height: calc(100vh - 120px); /* Adjust the height calculation for mobile */
+      margin-top: 10px; /* Reduce top margin for smaller screens */
+    }
+  }
+  
