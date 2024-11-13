@@ -51,22 +51,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load PDF content with PyMuPDF (fitz)
-def load_pdf_with_fitz(file_path):
-    doc = fitz.open(file_path)
-    text = ""
-    for page_num in range(len(doc)):
-        page = doc.load_page(page_num)
-        text += page.get_text()
-    return text
+def load_json(file_path):
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+    return data
 
-# Load the PDF and prepare text
-local_path = "context.pdf"
-pdf_text = load_pdf_with_fitz(local_path) if local_path else ""
+# Load the JSON file and prepare the documents
+local_path = "context.json"  # Path to your JSON dataset
+json_data = load_json(local_path)
+
+# Prepare documents by extracting the content from JSON
+documents = []
+for chunk in json_data:
+    # Check if content is a list (for FAQ sections or other list-based content)
+    if isinstance(chunk["content"], list):
+        # Convert the list to a string (e.g., joining questions and answers)
+        content_str = "\n".join([f"Q: {qa['question']}\nA: {qa['answer']}" for qa in chunk["content"]])
+    else:
+        content_str = chunk["content"]
+    
+    # Append the content as a Document
+    documents.append(Document(page_content=content_str))
 
 # Text Splitter
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-documents = [Document(page_content=pdf_text)]
 chunks = text_splitter.split_documents(documents)
 
 # Vector database
@@ -80,22 +88,34 @@ vector_db = Chroma.from_documents(
 local_model = "llama3.2:1b"
 llm = ChatOllama(model=local_model)
 
-# Define the prompt template
+# Define the smart prompt template
 QUERY_PROMPT = PromptTemplate(
-    input_variables=["question"],
-    template="""You are SilicAI, a QnA Chatbot that helps users with semiconductor defect analysis and general knowledge. 
-When the user asks a greeting or personal question, respond appropriately.
-When the user asks about the nature of defects in semiconductor manufacturing or technical aspects, respond based on the context from the PDF document provided.
-Use context given to understand what user has asked previously to answer the next question if it doesnt mention details.
+    input_variables=["question", "context"],
+    template="""You are SilicAI, a QnA Chatbot that helps users with semiconductor defect analysis and general knowledge.
+- Only greet of introduce if asked
+- Do not mention the context unless it's directly relevant to the question.
+- Do not mention conversation history from context at all
+- In context if there is ignore context, ignore the part of the context before the ignore context mention.
+- Don't answer anything that is not relevant to the question
+- If the user greets you or asks personal questions (e.g., "hello", "hi", "who are you"), respond with a polite greeting or a brief introduction about yourself.
+- If told to ignore context, only answer the latest question without considering previous interactions and context.
+- If told to forget context, only answer the latest question without considering previous interactions and context.
+- when told to consider context, consider last few interactions and context to provide a coherent response.
+- If the user asks a technical or document-related question and the context from the PDF document contains relevant information, provide a concise answer based on that context.
+- If the context doesn't address the question or is not needed, provide a brief and relevant answer using your general knowledge.
+- Do not mention the context unless it's directly relevant to the question.
+- Maintaining Conversation Flow:
+- Reference previous interactions if they are relevant to the current question to provide coherent and connected responses.
+- Avoid resetting or forgetting the context unless the user explicitly requests to start a new topic.
+- General Knowledge Questions: If the context does not contain relevant information for the user's question, respond using your general knowledge without referencing the context.
 
-- If the user greets, respond with a polite greeting.
-- If the user asks 'who are you' or 'what do you do', provide a brief introduction about yourself.
-- If the user asks any technical or document-related question, provide an answer based on the context of the PDF document.
 
 Question: {question}
 Context: {context}
-Answer: """,
+Answer:""",
 )
+
+
 
 # Set up retriever
 retriever = MultiQueryRetriever.from_llm(
@@ -164,7 +184,7 @@ async def chat_with_pdf(request: ChatRequest):
 
     # Include current defect type in the context if it is set
     if current_defect_type is not None:
-        context += f"\nCurrent Defect Type: {current_defect_type}"
+        context += f"\nIgnore any defect mentioned before in the context do not mention it at all, now an image of wafer map was uploaded and Current Defect Type is {current_defect_type}."
 
     # Format prompt with the conversation context
     prompt_text = QUERY_PROMPT.format(question=formatted_question, context=context)
@@ -293,15 +313,15 @@ def classify_wafer_map(wafer_map_tensor, model):
 
 # Defect mapping
 defect_mapping = {
-    0: "[['none']]",
-    1: "[['Loc']]",
-    2: "[['Edge-Loc']]",
-    3: "[['Center']]",
-    4: "[['Edge-Ring']]",
-    5: "[['Scratch']]",
-    6: "[['Random']]",
-    7: "[['Near-full']]",
-    8: "[['Donut']]"
+    0: "no defect",
+    1: "Loc defect",
+    2: "Edge-Loc defect",
+    3: "Center defect",
+    4: "Edge-Ring defect",
+    5: "Scratch defect",
+    6: "Random defect",
+    7: "Near-full defect",
+    8: "Donut defect"
 }
 
 # Function to convert image to tensor for classification
@@ -392,7 +412,7 @@ class SegmentationModel(nn.Module):
 segmentation_model = SegmentationModel()
 
 # Load the state dictionary (replace 'segmentation_model.pth' with your actual model path)
-SEGMENTATION_MODEL_PATH = "segmentation_model.pth"
+SEGMENTATION_MODEL_PATH = "best_model.pth"
 segmentation_model.load_state_dict(torch.load(SEGMENTATION_MODEL_PATH, map_location=torch.device('cpu')))
 segmentation_model.eval()
 

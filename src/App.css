@@ -97,6 +97,7 @@ body {
 .message.bot {
   background-color: transparent; /* Remove background color */
   padding: 0; /* Remove padding */
+  margin-left: 15px;
   border-radius: 0; /* Remove border-radius */
   color: #ffffff; /* Optional: Change text color for bot messages */
   align-self: flex-start;

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SilicAI</string>
+    <string name="title_activity_main">SilicAI</string>
+    <string name="package_name">com.silicai.app</string>
+    <string name="custom_url_scheme">com.silicai.app</string>
+</resources>
