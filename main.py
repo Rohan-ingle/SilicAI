@@ -18,7 +18,7 @@ from langchain_ollama.chat_models import ChatOllama
 from langchain_core.runnables import RunnablePassthrough
 from langchain.retrievers.multi_query import MultiQueryRetriever
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
@@ -29,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import warnings
-from langchain.schema import Document
+from langchain.schema import Document, HumanMessage
 
 import fitz
 
@@ -42,16 +42,16 @@ os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 # Initialize FastAPI app
 app = FastAPI()
 
-# Add CORS middleware to allow all origins (or specify which origins are allowed)
+# Add CORS middleware to allow all origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods like GET, POST, OPTIONS
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Load PDF using PyMuPDF (fitz)
+# Load PDF content with PyMuPDF (fitz)
 def load_pdf_with_fitz(file_path):
     doc = fitz.open(file_path)
     text = ""
@@ -60,95 +60,74 @@ def load_pdf_with_fitz(file_path):
         text += page.get_text()
     return text
 
-# Load the document (you can upload or specify a path here)
+# Load the PDF and prepare text
 local_path = "context.pdf"
 pdf_text = load_pdf_with_fitz(local_path) if local_path else ""
 
 # Text Splitter
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-
-# Wrap the PDF text into a Document
-documents = [Document(page_content=pdf_text)]  # Create Document object with 'page_content'
-
-# Split the document into chunks
+documents = [Document(page_content=pdf_text)]
 chunks = text_splitter.split_documents(documents)
 
-# Create vector database
+# Vector database
 vector_db = Chroma.from_documents(
     documents=chunks,
     embedding=OllamaEmbeddings(model="nomic-embed-text"),
     collection_name="local-rag"
 )
 
-local_model = "llama3.2:1b"  # Or whichever model you prefer
+# Load language model
+local_model = "llama3.2:1b"
 llm = ChatOllama(model=local_model)
 
-# Prompt template for handling various types of questions
+# Define the prompt template
 QUERY_PROMPT = PromptTemplate(
     input_variables=["question"],
     template="""You are SilicAI, a QnA Chatbot that helps users with semiconductor defect analysis and general knowledge. 
 When the user asks a greeting or personal question, respond appropriately.
 When the user asks about the nature of defects in semiconductor manufacturing or technical aspects, respond based on the context from the PDF document provided.
+Use context given to understand what user has asked previously to answer the next question if it doesnt mention details.
 
 - If the user greets, respond with a polite greeting.
 - If the user asks 'who are you' or 'what do you do', provide a brief introduction about yourself.
 - If the user asks any technical or document-related question, provide an answer based on the context of the PDF document.
 
 Question: {question}
+Context: {context}
 Answer: """,
 )
 
-# Set up retriever to generate variations of the question
+# Set up retriever
 retriever = MultiQueryRetriever.from_llm(
     vector_db.as_retriever(), 
     llm,
     prompt=QUERY_PROMPT
 )
 
-# Define the LLM's response template more concisely
-template = """Answer the question based ONLY on the following context and do not repeat the setup or unnecessary details except unrelated to question and answering like greetings:
-{context}
-Question: {question}
-Answer concisely based on context only.
-"""
-
-prompt = ChatPromptTemplate.from_template(template)
-
-# Final chain for processing the question and retrieving the answer
-chain = (
-    {"context": retriever, "question": RunnablePassthrough() }
-    | prompt
-    | llm
-    | StrOutputParser()
-)
+# Define conversation history storage
+conversation_history = []
 
 # Pydantic model to receive input as JSON
 class ChatRequest(BaseModel):
     question: str
-    defect: str = ""  # Keep defect as optional field
+    defect: str = ""
 
-# Asynchronous generator to process the token stream
-async def process_tokens(stream):
+# Process tokens for streaming response (only output the token content)
+async def process_tokens(stream, final_answer_list):
     queue = Queue()
 
     def run_stream():
         try:
             for token in stream:
-                # Attempt to access the correct attribute
-                # Adjust attribute names as necessary
+                # Extract content if it exists, ignoring other metadata
                 token_text = getattr(token, 'content', None)
-                if token_text is None:
-                    token_text = getattr(token, 'text', None)
-                if token_text is None:
-                    token_text = str(token)
-                # Convert to JSON string, append newline
-                json_str = json.dumps({"token": token_text}) + "\n"
-                queue.put_nowait(json_str)
+                if token_text:
+                    final_answer_list.append(token_text)  # Collect answer for conversation history
+                    queue.put_nowait(json.dumps({"token": token_text}) + "\n")
         except Exception as e:
-            json_str = json.dumps({"error": str(e)}) + "\n"
-            queue.put_nowait(json_str)
+            queue.put_nowait(json.dumps({"error": str(e)}) + "\n")
         finally:
-            queue.put_nowait(None)  # Signal completion
+            queue.put_nowait(None)
 
     # Run the synchronous stream in a background thread
     loop = asyncio.get_event_loop()
@@ -159,8 +138,12 @@ async def process_tokens(stream):
         item = await queue.get()
         if item is None:
             break
-        yield item.encode('utf-8')  # Yield bytes
+        yield item.encode('utf-8')
 
+# Global variable to store the current defect type from classification
+current_defect_type = None
+
+# Define the /chat endpoint with updated context to include current_defect_type
 @app.post("/chat")
 async def chat_with_pdf(request: ChatRequest):
     """
@@ -168,14 +151,64 @@ async def chat_with_pdf(request: ChatRequest):
     Accepts a question and defect information, and returns an answer from the PDF.
     """
     formatted_question = request.question.strip()
+    global conversation_history, current_defect_type
+
+    # Format conversation history for context
+    context = "\n".join([
+        f"User: {exchange['question']}\nBot: {exchange['answer']}"
+        for exchange in conversation_history
+    ])
+
+    # Add the latest question to the context
+    context += f"\nUser: {formatted_question}"
+
+    # Include current defect type in the context if it is set
+    if current_defect_type is not None:
+        context += f"\nCurrent Defect Type: {current_defect_type}"
+
+    # Format prompt with the conversation context
+    prompt_text = QUERY_PROMPT.format(question=formatted_question, context=context)
+    message = [HumanMessage(content=prompt_text)]
 
     try:
-        # Pass the question to llm.stream as a string or a BaseMessage object
-        # Ensure that the input type matches what llm.stream() expects
-        stream = llm.stream(formatted_question)  # Pass the question as a string
-        return StreamingResponse(process_tokens(stream), media_type="application/json")
+        # Stream the response from the language model
+        stream = llm.stream(message)
+
+        # Initialize a list to capture the final answer text for storage
+        final_answer_list = []
+
+        # Return streaming response to the client
+        response = StreamingResponse(process_tokens(stream, final_answer_list), media_type="application/json")
+
+        # Append current interaction to conversation history after streaming completes
+        conversation_history.append({"question": formatted_question, "answer": "".join(final_answer_list)})
+        
+        return response
     except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)  # Handle errors and return as response
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+# New endpoint to retrieve and optionally purge the conversation history
+@app.get("/history")
+async def get_conversation_history(purge: bool = Query(False)):
+    """
+    Endpoint to retrieve the entire conversation history for debugging purposes.
+    If 'purge' is set to true, it will clear the history after returning it.
+    """
+    global conversation_history, current_defect_type
+
+    # Capture the current history and defect type to return
+    history = {
+        "conversation_history": conversation_history,
+        "current_defect_type": current_defect_type
+    }
+
+    # Clear the history and defect type if purge is set to true
+    if purge:
+        conversation_history = []
+        current_defect_type = None
+
+    return JSONResponse(content=history)
 
 # ----------------------- Classification Part -----------------------
 
@@ -521,7 +554,7 @@ def image_to_tensor_classification(image_path):
     wafer_map_tensor = torch.tensor(wafer_map, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: [1, 1, H, W]
     return wafer_map_tensor
 
-# Define the /ml endpoint for classification
+# Modify the /ml endpoint to update the current_defect_type
 @app.post("/ml")
 async def classify_image(image: UploadFile = File(...)):
     """
@@ -534,6 +567,8 @@ async def classify_image(image: UploadFile = File(...)):
     Returns:
         JSONResponse: Contains the defect type and name.
     """
+    global current_defect_type  # Use the global variable to store the latest defect type
+
     try:
         # Validate file type
         if not image.content_type.startswith('image/'):
@@ -550,6 +585,9 @@ async def classify_image(image: UploadFile = File(...)):
         # Perform classification
         defect_type = classify_wafer_map_function(wafer_map_tensor, classification_model)
         defect_name = defect_mapping.get(defect_type, "Unknown")
+
+        # Update the global current_defect_type with the latest defect type
+        current_defect_type = defect_name  # Storing defect name for clarity in the context
 
         # Remove the temporary file
         os.remove(temp_file_path)

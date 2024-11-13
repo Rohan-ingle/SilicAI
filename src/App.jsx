@@ -64,13 +64,18 @@ function App() {
 
     try {
       if (action === 'chat' && input.trim()) {
-        // Text request, send to /chat
+        // Prepare chat history to send (excluding images)
+        const chatHistory = messages
+          .filter(msg => msg.role === 'user' || msg.role === 'bot')
+          .map(msg => ({ role: msg.role, content: msg.content }));
+
+        // Send the chat history along with the current question
         const response = await fetch('http://127.0.0.1:8000/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ question: input }),
+          body: JSON.stringify({ question: input, chat_history: chatHistory }),
         });
 
         if (!response.body) {
@@ -117,7 +122,7 @@ function App() {
 
         setIsBotTyping(false); // Hide typing indicator
       } else if ((action === 'classify' || action === 'segment') && image) {
-        // Image request, send to /ml or /dl based on action
+        // Handle image requests (classification or segmentation)
         const formData = new FormData();
         formData.append('image', image);
 
