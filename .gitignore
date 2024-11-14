@@ -34,4 +34,4 @@ db.py
 serveo.bat
 
 # Test Models
-best_model.pth
+segmentation_model.pth

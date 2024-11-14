@@ -70,7 +70,7 @@ function App() {
           .map(msg => ({ role: msg.role, content: msg.content }));
 
         // Send the chat history along with the current question
-        const response = await fetch('http://127.0.0.1:8000/chat', {
+        const response = await fetch('https://distinctly-thorough-pelican.ngrok-free.app/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -128,9 +128,9 @@ function App() {
 
         let endpoint = '';
         if (action === 'classify') {
-          endpoint = 'http://127.0.0.1:8000/ml';
+          endpoint = 'https://distinctly-thorough-pelican.ngrok-free.app/ml';
         } else if (action === 'segment') {
-          endpoint = 'http://127.0.0.1:8000/dl';
+          endpoint = 'https://distinctly-thorough-pelican.ngrok-free.app/dl';
         }
 
         const response = await fetch(endpoint, {
