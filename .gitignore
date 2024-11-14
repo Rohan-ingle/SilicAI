@@ -35,3 +35,4 @@ serveo.bat
 
 # Test Models
 segmentation_model.pth
+users.db

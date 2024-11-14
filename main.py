@@ -33,15 +33,23 @@ from langchain.schema import Document, HumanMessage
 
 import fitz
 
-# Suppress warnings
-warnings.filterwarnings('ignore')
+import sqlite3
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
 
-# Set environment variable for protobuf
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+from typing import List
+
+# Constants for JWT
+SECRET_KEY = "keysec"  # Replace with a secure secret key
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Initialize FastAPI app
 app = FastAPI()
-
 # Add CORS middleware to allow all origins
 app.add_middleware(
     CORSMiddleware,
@@ -50,6 +58,135 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Password hashing setup
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Database setup function
+def get_db_connection():
+    conn = sqlite3.connect("users.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# Initialize the database with a users table
+def init_db():
+    with get_db_connection() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+# Call to initialize the database
+init_db()
+
+# Pydantic models for request and response
+class User(BaseModel):
+    username: str
+    password: str
+
+
+# Database model for the user response
+class UserData(BaseModel):
+    id: int
+    username: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+# Helper function to hash passwords
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+# Helper function to verify password
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+# JWT token creation
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+# Registration endpoint
+@app.post("/register", response_model=dict)
+async def register(user: User):
+    hashed_password = hash_password(user.password)
+    try:
+        with get_db_connection() as conn:
+            conn.execute("INSERT INTO users (username, password) VALUES (?, ?)", (user.username, hashed_password))
+            conn.commit()
+        return {"message": "User registered successfully"}
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+# Login endpoint to authenticate and return JWT
+@app.post("/token", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (form_data.username,))
+        user = cursor.fetchone()
+
+    if not user or not verify_password(form_data.password, user["password"]):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+
+    access_token = create_access_token(data={"sub": form_data.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# Dependency to get the current user from the token
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=401, detail="Could not validate credentials", headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        user = cursor.fetchone()
+    if user is None:
+        raise credentials_exception
+    return user
+
+# Protected route to test authentication
+@app.get("/protected-route")
+async def protected_route(current_user: dict = Depends(get_current_user)):
+    return {"message": f"Hello, {current_user['username']}! This is a protected route."}
+
+
+# Suppress warnings
+warnings.filterwarnings('ignore')
+
+# Set environment variable for protobuf
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+
+
+@app.get("/users", response_model=List[UserData])
+async def get_all_users():
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, username FROM users")
+            users = cursor.fetchall()
+        
+        user_list = [{"id": user["id"], "username": user["username"]} for user in users]
+        return user_list
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 def load_json(file_path):
     with open(file_path, 'r') as f:
