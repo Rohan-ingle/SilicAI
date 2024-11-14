@@ -174,14 +174,24 @@ function App() {
         </div>
 
         <div className="chat-input">
-          <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyPress={handleKeyPress} placeholder="Type your message..." />
+        <div className="input-container">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="Type your message..."
+          />
+          <label htmlFor="file-upload" className="clip-logo">🔗</label>
+        </div>
+
           
           <select value={action} onChange={(e) => setAction(e.target.value)} className="action-selector">
             <option value="chat">Chat</option>
             <option value="classify">Classify</option>
             <option value="segment">Segment</option>
           </select>
-          <label htmlFor="file-upload" className="clip-logo">📎</label>
+          {/* <label htmlFor="file-upload" className="clip-logo">📎</label> */}
           <input id="file-upload" type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
           <button onClick={handleSendMessage} ref={sendButtonRef} disabled={isBotTyping}>Send</button>
         </div>

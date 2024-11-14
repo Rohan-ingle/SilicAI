@@ -223,6 +223,7 @@ vector_db = Chroma.from_documents(
 
 # Load language model
 local_model = "llama3.2:1b"
+# local_model = "llama3.2:1b-instruct-q2_K"
 llm = ChatOllama(model=local_model)
 
 # Define the smart prompt template
@@ -252,6 +253,24 @@ Context: {context}
 Answer:""",
 )
 
+# QUERY_PROMPT = PromptTemplate(
+#     input_variables=["question", "context"],
+#     template="""You are SilicAI, a QnA Chatbot specializing in semiconductor defect analysis and general knowledge. 
+
+# Guidelines:
+# - Only greet or introduce yourself if the user asks.
+# - Do not mention prompts
+# - Use context only if directly relevant to the question; ignore it if it contains "ignore context" or if the user asks to skip it.
+# - For greetings or personal questions (e.g., "hello," "who are you"), provide a brief greeting or introduction.
+# - When asked about technical or document-related topics, use specific information from the context if relevant; otherwise, answer based on general knowledge.
+# - Always avoid repeating instructions or conversation rules in your response.
+
+# Question: {question}
+# Context: {context}
+# Answer:"""
+# )
+
+
 
 
 # Set up retriever
@@ -270,7 +289,7 @@ class ChatRequest(BaseModel):
     defect: str = ""
 
 # Process tokens for streaming response (only output the token content)
-async def process_tokens(stream, final_answer_list):
+async def process_tokens(stream, final_answer_list, formatted_question, conversation_history):
     queue = Queue()
 
     def run_stream():
@@ -284,18 +303,25 @@ async def process_tokens(stream, final_answer_list):
         except Exception as e:
             queue.put_nowait(json.dumps({"error": str(e)}) + "\n")
         finally:
-            queue.put_nowait(None)
+            queue.put_nowait(None)  # Signal the end of streaming
 
     # Run the synchronous stream in a background thread
     loop = asyncio.get_event_loop()
     executor = ThreadPoolExecutor(max_workers=1)
-    loop.run_in_executor(executor, run_stream)
+    await loop.run_in_executor(executor, run_stream)
 
+    # Stream tokens to the client as they arrive
     while True:
         item = await queue.get()
         if item is None:
             break
         yield item.encode('utf-8')
+
+    # After streaming completes, append to conversation_history
+    conversation_history.append({
+        "question": formatted_question,
+        "answer": "".join(final_answer_list)  # Join tokens to create the full response
+    })
 
 # Global variable to store the current defect type from classification
 current_defect_type = None
@@ -321,7 +347,7 @@ async def chat_with_pdf(request: ChatRequest):
 
     # Include current defect type in the context if it is set
     if current_defect_type is not None:
-        context += f"\nIgnore any defect mentioned before in the context do not mention it at all, now an image of wafer map was uploaded and Current Defect Type is {current_defect_type}."
+        context += f"\nCurrent Defect Type: {current_defect_type}. Ignore any previous mentions of other defects."
 
     # Format prompt with the conversation context
     prompt_text = QUERY_PROMPT.format(question=formatted_question, context=context)
@@ -335,14 +361,15 @@ async def chat_with_pdf(request: ChatRequest):
         final_answer_list = []
 
         # Return streaming response to the client
-        response = StreamingResponse(process_tokens(stream, final_answer_list), media_type="application/json")
+        response = StreamingResponse(
+            process_tokens(stream, final_answer_list, formatted_question, conversation_history),
+            media_type="application/json"
+        )
 
-        # Append current interaction to conversation history after streaming completes
-        conversation_history.append({"question": formatted_question, "answer": "".join(final_answer_list)})
-        
         return response
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
 
 # New endpoint to retrieve and optionally purge the conversation history

@@ -276,3 +276,35 @@ body {
   border: 1px solid #4b4bff;
   background-color: #444;
 }
+
+.input-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%; /* Adjust this if you need to limit the width */
+  max-width: 600px; /* Set max width for the input field if needed */
+}
+
+.input-container input[type="text"] {
+  padding-left: 10px; /* Padding for the clip icon */
+  width: 100%; /* Ensures the input takes the full container width */
+  padding-right: 10px; /* Optional, adds space at the right end */
+  height: 40px; /* Adjust height if desired */
+  font-size: 1em; /* Adjust font size */
+}
+
+
+.input-container input[type="text"] {
+  padding-right: 30px; /* Add padding to avoid overlap with the clip icon */
+  width: 100%;
+  max-width: 600px;
+}
+
+.clip-logo {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1.2em;
+  cursor: pointer;
+}

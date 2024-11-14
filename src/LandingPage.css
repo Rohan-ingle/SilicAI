@@ -81,7 +81,7 @@
     background: white;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    display: inline-block; /* Required for width animation */
+    display: inline-block; /*Required for width animation */
 }
 
 /* Typewriter Keyframes */
