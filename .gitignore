@@ -32,3 +32,6 @@ chat_history.db
 chat_app.db
 db.py
 serveo.bat
+
+# Test Models
+best_model.pth

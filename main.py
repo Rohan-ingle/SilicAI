@@ -412,7 +412,7 @@ class SegmentationModel(nn.Module):
 segmentation_model = SegmentationModel()
 
 # Load the state dictionary (replace 'segmentation_model.pth' with your actual model path)
-SEGMENTATION_MODEL_PATH = "best_model.pth"
+SEGMENTATION_MODEL_PATH = "segmentation_model.pth"
 segmentation_model.load_state_dict(torch.load(SEGMENTATION_MODEL_PATH, map_location=torch.device('cpu')))
 segmentation_model.eval()
 
