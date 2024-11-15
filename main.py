@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 import numpy as np
 from PIL import Image
-import shutil  # For saving the uploaded image temporarily
+import shutil
 import io
 import base64
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('Agg')  # Use a non-interactive backend for matplotlib
+matplotlib.use('Agg')
 
 from langchain_ollama import OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -18,7 +18,7 @@ from langchain_ollama.chat_models import ChatOllama
 from langchain_core.runnables import RunnablePassthrough
 from langchain.retrievers.multi_query import MultiQueryRetriever
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
@@ -29,9 +29,140 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import warnings
-from langchain.schema import Document
+from langchain.schema import Document, HumanMessage
 
-import fitz
+import sqlite3
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+
+from typing import List
+
+
+SECRET_KEY = "keysec"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Password hashing setup
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Database setup function
+def get_db_connection():
+    conn = sqlite3.connect("users.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# Initialize the database with a users table
+def init_db():
+    with get_db_connection() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+# Call to initialize the database
+init_db()
+
+# Pydantic models for request and response
+class User(BaseModel):
+    username: str
+    password: str
+
+
+# Database model for the user response
+class UserData(BaseModel):
+    id: int
+    username: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+# Helper function to hash passwords
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+# Helper function to verify password
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+# JWT token creation
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+# Registration endpoint
+@app.post("/register", response_model=dict)
+async def register(user: User):
+    hashed_password = hash_password(user.password)
+    try:
+        with get_db_connection() as conn:
+            conn.execute("INSERT INTO users (username, password) VALUES (?, ?)", (user.username, hashed_password))
+            conn.commit()
+        return {"message": "User registered successfully"}
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+# Login endpoint to authenticate and return JWT
+@app.post("/token", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (form_data.username,))
+        user = cursor.fetchone()
+
+    if not user or not verify_password(form_data.password, user["password"]):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+
+    access_token = create_access_token(data={"sub": form_data.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# Dependency to get the current user from the token
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=401, detail="Could not validate credentials", headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        user = cursor.fetchone()
+    if user is None:
+        raise credentials_exception
+    return user
+
+# Protected route to test authentication
+@app.get("/protected-route")
+async def protected_route(current_user: dict = Depends(get_current_user)):
+    return {"message": f"Hello, {current_user['username']}! This is a protected route."}
+
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -39,143 +170,214 @@ warnings.filterwarnings('ignore')
 # Set environment variable for protobuf
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
-# Initialize FastAPI app
-app = FastAPI()
 
-# Add CORS middleware to allow all origins (or specify which origins are allowed)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods like GET, POST, OPTIONS
-    allow_headers=["*"],  # Allow all headers
-)
+@app.get("/users", response_model=List[UserData])
+async def get_all_users():
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, username FROM users")
+            users = cursor.fetchall()
+        
+        user_list = [{"id": user["id"], "username": user["username"]} for user in users]
+        return user_list
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-# Load PDF using PyMuPDF (fitz)
-def load_pdf_with_fitz(file_path):
-    doc = fitz.open(file_path)
-    text = ""
-    for page_num in range(len(doc)):
-        page = doc.load_page(page_num)
-        text += page.get_text()
-    return text
 
-# Load the document (you can upload or specify a path here)
-local_path = "context.pdf"
-pdf_text = load_pdf_with_fitz(local_path) if local_path else ""
+def load_json(file_path):
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+    return data
+
+# Load the JSON file and prepare the documents
+local_path = "context.json"  # Path to your JSON dataset
+json_data = load_json(local_path)
+
+# Prepare documents by extracting the content from JSON
+documents = []
+for chunk in json_data:
+    # Check if content is a list (for FAQ sections or other list-based content)
+    if isinstance(chunk["content"], list):
+        # Convert the list to a string (e.g., joining questions and answers)
+        content_str = "\n".join([f"Q: {qa['question']}\nA: {qa['answer']}" for qa in chunk["content"]])
+    else:
+        content_str = chunk["content"]
+    
+    # Append the content as a Document
+    documents.append(Document(page_content=content_str))
 
 # Text Splitter
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-
-# Wrap the PDF text into a Document
-documents = [Document(page_content=pdf_text)]  # Create Document object with 'page_content'
-
-# Split the document into chunks
 chunks = text_splitter.split_documents(documents)
 
-# Create vector database
+# Vector database
 vector_db = Chroma.from_documents(
     documents=chunks,
     embedding=OllamaEmbeddings(model="nomic-embed-text"),
     collection_name="local-rag"
 )
 
-local_model = "llama3.2:1b"  # Or whichever model you prefer
+# Load language model
+local_model = "llama3.2:1b"
+# local_model = "llama3.2:1b-instruct-q2_K"
 llm = ChatOllama(model=local_model)
 
-# Prompt template for handling various types of questions
+# Define the smart prompt template
 QUERY_PROMPT = PromptTemplate(
-    input_variables=["question"],
-    template="""You are SilicAI, a QnA Chatbot that helps users with semiconductor defect analysis and general knowledge. 
-When the user asks a greeting or personal question, respond appropriately.
-When the user asks about the nature of defects in semiconductor manufacturing or technical aspects, respond based on the context from the PDF document provided.
+    input_variables=["question", "context"],
+    template="""You are SilicAI, a QnA Chatbot that helps users with semiconductor defect analysis and general knowledge.
+- Do no mention that you have ignored the context
+- Only greet of introduce if asked
+- If greetings are in context do not greet again
+- Do not mention the context unless it's directly relevant to the question.
+- Do not mention conversation history from context at all
+- In context if there is ignore context, ignore the part of the context before the ignore context mention.
+- Don't answer anything that is not relevant to the question
+- If the user greets you or asks personal questions (e.g., "hello", "hi", "who are you"), respond with a polite greeting or a brief introduction about yourself.
+- If told to ignore context, only answer the latest question without considering previous interactions and context.
+- If told to forget context, only answer the latest question without considering previous interactions and context.
+- when told to consider context, consider last few interactions and context to provide a coherent response.
+- If the user asks a technical or document-related question and the context from the PDF document contains relevant information, provide a concise answer based on that context.
+- If the context doesn't address the question or is not needed, provide a brief and relevant answer using your general knowledge.
+- Do not mention the context unless it's directly relevant to the question.
+- Maintaining Conversation Flow:
+- Reference previous interactions if they are relevant to the current question to provide coherent and connected responses.
+- Avoid resetting or forgetting the context unless the user explicitly requests to start a new topic.
+- General Knowledge Questions: If the context does not contain relevant information for the user's question, respond using your general knowledge without referencing the context.
 
-- If the user greets, respond with a polite greeting.
-- If the user asks 'who are you' or 'what do you do', provide a brief introduction about yourself.
-- If the user asks any technical or document-related question, provide an answer based on the context of the PDF document.
 
 Question: {question}
-Answer: """,
+Context: {context}
+Answer:""",
 )
 
-# Set up retriever to generate variations of the question
+# Set up retriever
 retriever = MultiQueryRetriever.from_llm(
     vector_db.as_retriever(), 
     llm,
     prompt=QUERY_PROMPT
 )
 
-# Define the LLM's response template more concisely
-template = """Answer the question based ONLY on the following context and do not repeat the setup or unnecessary details except unrelated to question and answering like greetings:
-{context}
-Question: {question}
-Answer concisely based on context only.
-"""
-
-prompt = ChatPromptTemplate.from_template(template)
-
-# Final chain for processing the question and retrieving the answer
-chain = (
-    {"context": retriever, "question": RunnablePassthrough() }
-    | prompt
-    | llm
-    | StrOutputParser()
-)
+# Define conversation history storage
+conversation_history = []
 
 # Pydantic model to receive input as JSON
 class ChatRequest(BaseModel):
     question: str
-    defect: str = ""  # Keep defect as optional field
+    defect: str = ""
 
-# Asynchronous generator to process the token stream
-async def process_tokens(stream):
-    queue = Queue()
+async def process_tokens(stream, final_answer_list, formatted_question, conversation_history):
+    queue = asyncio.Queue()
 
     def run_stream():
         try:
             for token in stream:
-                # Attempt to access the correct attribute
-                # Adjust attribute names as necessary
+                # Extract content if it exists, ignoring other metadata
                 token_text = getattr(token, 'content', None)
-                if token_text is None:
-                    token_text = getattr(token, 'text', None)
-                if token_text is None:
-                    token_text = str(token)
-                # Convert to JSON string, append newline
-                json_str = json.dumps({"token": token_text}) + "\n"
-                queue.put_nowait(json_str)
+                if token_text:
+                    final_answer_list.append(token_text)  # Collect answer for conversation history
+                    # Use asyncio.run_coroutine_threadsafe to safely interact with the asyncio.Queue from a thread
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put(json.dumps({"token": token_text}) + "\n"),
+                        loop
+                    )
         except Exception as e:
-            json_str = json.dumps({"error": str(e)}) + "\n"
-            queue.put_nowait(json_str)
+            asyncio.run_coroutine_threadsafe(
+                queue.put(json.dumps({"error": str(e)}) + "\n"),
+                loop
+            )
         finally:
-            queue.put_nowait(None)  # Signal completion
+            asyncio.run_coroutine_threadsafe(queue.put(None), loop)  # Signal the end of streaming
 
-    # Run the synchronous stream in a background thread
     loop = asyncio.get_event_loop()
     executor = ThreadPoolExecutor(max_workers=1)
+    # Start the background thread to process the stream
     loop.run_in_executor(executor, run_stream)
 
+    # Stream tokens to the client as they arrive
     while True:
         item = await queue.get()
         if item is None:
             break
-        yield item.encode('utf-8')  # Yield bytes
+        yield item.encode('utf-8')
 
+    # After streaming completes, append to conversation_history
+    conversation_history.append({
+        "question": formatted_question,
+        "answer": "".join(final_answer_list)  # Join tokens to create the full response
+    })
+
+# Global variables
+conversation_history = []
+current_defect_type = None
+
+# Define the /chat endpoint with updated context to include current_defect_type
 @app.post("/chat")
 async def chat_with_pdf(request: ChatRequest):
-    """
-    Endpoint for chatting with the PDF.
-    Accepts a question and defect information, and returns an answer from the PDF.
-    """
+
     formatted_question = request.question.strip()
+    global conversation_history, current_defect_type
+
+    # Format conversation history for context
+    context = "\n".join([
+        f"User: {exchange['question']}\nBot: {exchange['answer']}"
+        for exchange in conversation_history
+    ])
+
+    # Add the latest question to the context
+    context += f"\nUser: {formatted_question}"
+
+    # Include current defect type in the context if it is set
+    if current_defect_type is not None:
+        context += f"\nCurrent Defect Type: {current_defect_type}. Ignore any previous mentions of other defects."
+
+    # Format prompt with the conversation context
+    prompt_text = QUERY_PROMPT.format(question=formatted_question, context=context)
+    message = [HumanMessage(content=prompt_text)]
 
     try:
-        # Pass the question to llm.stream as a string or a BaseMessage object
-        # Ensure that the input type matches what llm.stream() expects
-        stream = llm.stream(formatted_question)  # Pass the question as a string
-        return StreamingResponse(process_tokens(stream), media_type="application/json")
+        # Stream the response from the language model
+        stream = llm.stream(message)
+
+        # Initialize a list to capture the final answer text for storage
+        final_answer_list = []
+
+
+        # Return streaming response to the client
+        response = StreamingResponse(
+            process_tokens(stream, final_answer_list, formatted_question, conversation_history),
+            media_type="application/json"
+        )
+
+        return response
     except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)  # Handle errors and return as response
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+
+# New endpoint to retrieve and optionally purge the conversation history
+@app.get("/history")
+async def get_conversation_history(purge: bool = Query(False)):
+    global conversation_history, current_defect_type
+
+    # Debugging: Capture the current state of history and defect type
+    print("Before purge:", conversation_history, current_defect_type)
+
+    # Capture the current history and defect type to return
+    history = {
+        "conversation_history": conversation_history,
+        "current_defect_type": current_defect_type
+    }
+
+    # Clear the history and defect type if purge is set to true
+    if purge:
+        # Ensure that you clear the history correctly
+        conversation_history.clear()  # Clears the list
+        current_defect_type = None   # Resets the defect type
+        print("After purge:", conversation_history, current_defect_type)
+
+    return JSONResponse(content=history)
 
 # ----------------------- Classification Part -----------------------
 
@@ -222,15 +424,6 @@ intensity_map_reverse = {0: 0, 128: 1, 255: 2}
 
 # Function to convert image back to wafer map (numpy array)
 def image_to_wafer_map(image_path):
-    """
-    Converts a grayscale image to a wafer map with intensities 0, 1, 2.
-    
-    Args:
-        image_path (str): Path to the input grayscale image.
-    
-    Returns:
-        np.ndarray: Wafer map with values 0, 1, 2.
-    """
     wafer_image = Image.open(image_path).convert("L")  # Convert to grayscale
     wafer_map = np.array(wafer_image)
     
@@ -240,16 +433,6 @@ def image_to_wafer_map(image_path):
 
 # Function to classify the wafer map using the model
 def classify_wafer_map(wafer_map_tensor, model):
-    """
-    Classifies the wafer map to identify the defect type.
-    
-    Args:
-        wafer_map_tensor (torch.Tensor): Tensor representation of the wafer map.
-        model (nn.Module): Classification model.
-    
-    Returns:
-        int: Defect type index.
-    """
     if torch.cuda.is_available():
         wafer_map_tensor = wafer_map_tensor.cuda()
     with torch.no_grad():
@@ -260,44 +443,25 @@ def classify_wafer_map(wafer_map_tensor, model):
 
 # Defect mapping
 defect_mapping = {
-    0: "[['none']]",
-    1: "[['Loc']]",
-    2: "[['Edge-Loc']]",
-    3: "[['Center']]",
-    4: "[['Edge-Ring']]",
-    5: "[['Scratch']]",
-    6: "[['Random']]",
-    7: "[['Near-full']]",
-    8: "[['Donut']]"
+    0: "no defect",
+    1: "Loc defect",
+    2: "Edge-Loc defect",
+    3: "Center defect",
+    4: "Edge-Ring defect",
+    5: "Scratch defect",
+    6: "Random defect",
+    7: "Near-full defect",
+    8: "Donut defect"
 }
 
 # Function to convert image to tensor for classification
 def image_to_tensor_classification(image_path):
-    """
-    Converts a wafer map image to a PyTorch tensor.
-    
-    Args:
-        image_path (str): Path to the input image.
-    
-    Returns:
-        torch.Tensor: Tensor suitable for the classification model.
-    """
     wafer_map = image_to_wafer_map(image_path)
     wafer_map_tensor = torch.tensor(wafer_map, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: [1, 1, H, W]
     return wafer_map_tensor
 
 # Function to classify the wafer map
 def classify_wafer_map_function(wafer_map_tensor, model):
-    """
-    Classifies the wafer map to identify the defect type.
-    
-    Args:
-        wafer_map_tensor (torch.Tensor): Tensor representation of the wafer map.
-        model (nn.Module): Classification model.
-    
-    Returns:
-        int: Defect type index.
-    """
     if torch.cuda.is_available():
         wafer_map_tensor = wafer_map_tensor.cuda()
     with torch.no_grad():
@@ -308,15 +472,7 @@ def classify_wafer_map_function(wafer_map_tensor, model):
 
 # Function to convert wafer map to image (for visualization)
 def wafer_map_to_image(wafer_map):
-    """
-    Converts a wafer map with values 0, 1, 2 to a grayscale image with intensities 0, 128, 255.
-    
-    Args:
-        wafer_map (np.ndarray): Wafer map with values 0, 1, 2.
-    
-    Returns:
-        PIL.Image.Image: Grayscale image.
-    """
+
     intensity_map = {0: 0, 1: 128, 2: 255}
     wafer_map_visual = np.vectorize(intensity_map.get)(wafer_map)
     wafer_map_visual = wafer_map_visual.astype(np.uint8)
@@ -359,7 +515,7 @@ class SegmentationModel(nn.Module):
 segmentation_model = SegmentationModel()
 
 # Load the state dictionary (replace 'segmentation_model.pth' with your actual model path)
-SEGMENTATION_MODEL_PATH = "segmentation_model.pth"
+SEGMENTATION_MODEL_PATH = "best_model.pth"
 segmentation_model.load_state_dict(torch.load(SEGMENTATION_MODEL_PATH, map_location=torch.device('cpu')))
 segmentation_model.eval()
 
@@ -370,31 +526,14 @@ if torch.cuda.is_available():
 
 # Function to convert image to tensor for segmentation
 def image_to_tensor(image_path):
-    """
-    Converts a wafer map image to a PyTorch tensor.
-    
-    Args:
-        image_path (str): Path to the input image.
-    
-    Returns:
-        torch.Tensor: Tensor suitable for the segmentation model.
-    """
+
     wafer_map = image_to_wafer_map(image_path)
     wafer_map_tensor = torch.tensor(wafer_map, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: [1, 1, H, W]
     return wafer_map_tensor
 
 # Function to perform segmentation
 def perform_segmentation(tensor, model):
-    """
-    Performs segmentation on the input tensor using the provided model.
-    
-    Args:
-        tensor (torch.Tensor): Input tensor.
-        model (nn.Module): Segmentation model.
-    
-    Returns:
-        np.ndarray: Segmented map.
-    """
+
     if torch.cuda.is_available():
         tensor = tensor.cuda()
     with torch.no_grad():
@@ -404,16 +543,7 @@ def perform_segmentation(tensor, model):
 
 # Function to create overlay image
 def create_overlay_image(original_image_path, segmented_map):
-    """
-    Creates an overlay image by combining the original wafer map and the segmented map.
-    
-    Args:
-        original_image_path (str): Path to the original grayscale image.
-        segmented_map (np.ndarray): Segmented map with float values between 0 and 1.
-    
-    Returns:
-        str: Base64-encoded PNG image.
-    """
+
     wafer_map = np.array(Image.open(original_image_path).convert("L"))  # Original grayscale image
 
     # Create a binary mask from the segmented map
@@ -440,16 +570,7 @@ def create_overlay_image(original_image_path, segmented_map):
 # Define the /dl endpoint for segmentation
 @app.post("/dl")
 async def segment_image(image: UploadFile = File(...)):
-    """
-    Endpoint for image segmentation.
-    Accepts an uploaded wafer map image, performs segmentation, and returns the annotated image.
-    
-    Args:
-        image (UploadFile): Uploaded image file.
-    
-    Returns:
-        JSONResponse: Contains a message and the base64-encoded segmented image.
-    """
+
     try:
         # Validate file type
         if not image.content_type.startswith('image/'):
@@ -488,16 +609,7 @@ async def segment_image(image: UploadFile = File(...)):
 
 # Function to classify the wafer map
 def classify_wafer_map_function(wafer_map_tensor, model):
-    """
-    Classifies the wafer map to identify the defect type.
-    
-    Args:
-        wafer_map_tensor (torch.Tensor): Tensor representation of the wafer map.
-        model (nn.Module): Classification model.
-    
-    Returns:
-        int: Defect type index.
-    """
+
     if torch.cuda.is_available():
         wafer_map_tensor = wafer_map_tensor.cuda()
     with torch.no_grad():
@@ -508,32 +620,17 @@ def classify_wafer_map_function(wafer_map_tensor, model):
 
 # Function to convert image to tensor for classification
 def image_to_tensor_classification(image_path):
-    """
-    Converts a wafer map image to a PyTorch tensor for classification.
-    
-    Args:
-        image_path (str): Path to the input image.
-    
-    Returns:
-        torch.Tensor: Tensor suitable for the classification model.
-    """
+
     wafer_map = image_to_wafer_map(image_path)
     wafer_map_tensor = torch.tensor(wafer_map, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: [1, 1, H, W]
     return wafer_map_tensor
 
-# Define the /ml endpoint for classification
+# Modify the /ml endpoint to update the current_defect_type
 @app.post("/ml")
 async def classify_image(image: UploadFile = File(...)):
-    """
-    Endpoint for image classification.
-    Accepts an uploaded wafer map image, classifies it, and returns the defect type.
-    
-    Args:
-        image (UploadFile): Uploaded image file.
-    
-    Returns:
-        JSONResponse: Contains the defect type and name.
-    """
+
+    global current_defect_type
+
     try:
         # Validate file type
         if not image.content_type.startswith('image/'):
@@ -550,6 +647,9 @@ async def classify_image(image: UploadFile = File(...)):
         # Perform classification
         defect_type = classify_wafer_map_function(wafer_map_tensor, classification_model)
         defect_name = defect_mapping.get(defect_type, "Unknown")
+
+        # Update the global current_defect_type with the latest defect type
+        current_defect_type = defect_name  # Storing defect name for clarity in the context
 
         # Remove the temporary file
         os.remove(temp_file_path)

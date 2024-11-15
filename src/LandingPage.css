@@ -1,0 +1,91 @@
+/* src/LandingPage.css */
+.landing-heading {
+    margin-bottom: 20px;
+    align-items: center;
+    position: relative;
+}
+/* src/LandingPage.css */
+
+/* Container Styling */
+.landing-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh; /* Full viewport height */
+    background-color: #f0f0f0; /* Optional: Background color for the landing page */
+}
+
+/* Button Styling */
+.landing-button {
+    outline: none;
+    cursor: pointer;
+    border: none;
+    padding: 0.9rem 2rem;
+    font-family: inherit;
+    font-size: 17px;
+    position: absolute;
+    align-items: center;
+    display: inline-block;
+    font-weight: 700;
+    border-radius: 500px;
+    overflow: hidden; /* Ensure pseudo-elements don't overflow */
+    background: hsl(261, 78%, 56%);
+    color: rgb(0, 0, 0);
+    transition: color 0.4s ease; /* Smooth transition for text color */
+}
+
+.landing-button:hover {
+    color: rgb(255, 255, 255); /* Text color change on hover */
+}
+
+/* Create the sliding background effect */
+.landing-button::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -121%; /* Start off-screen to the left */
+    width: 120%; /* Match button width */
+    height: 120%;
+    background: #000; /* Sliding background color */
+    z-index: 0; /* Ensure it's behind the text */
+    transform: skewX(30deg) translateX(0); /* Initial transform */
+    transition: transform 0.4s cubic-bezier(0.3, 1, 0.8, 1); /* Smooth animation */
+}
+
+.landing-button:hover::before {
+    transform: skewX(30deg) translateX(95%); /* Slide across without overshooting */
+}
+
+.landing-button span {
+    position: relative;
+    z-index: 1; /* Ensure text is above the pseudo-element */
+    transition: color 0.4s ease; /*Smooth transition for text color*/
+}
+
+/* Loader Styling */
+.loader {
+    position: relative;
+    overflow: hidden;
+    bottom: 20px ;
+    width: 0;
+    white-space: nowrap; /* Prevent text wrapping */
+    animation: typewriter 0.4s steps(40) forwards; /* Typewriter animation */
+}
+
+/* Loader Text Styling */
+.loader-text {
+    font-size: 40px;
+    font-weight: 700;
+    /* background: linear-gradient(to right, #159957, #155799); */
+    background: white;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: inline-block; /*Required for width animation */
+}
+
+/* Typewriter Keyframes */
+@keyframes typewriter {
+    from { width: 0; }
+    to { width: 100%; } /* Adjust based on text length */
+}
