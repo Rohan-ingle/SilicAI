@@ -6,42 +6,42 @@
     },
     {
         "id": "chunk_2",
-        "title": "Loc Defects (ID: 1)",
+        "title": "Loc Defects",
         "content": "Loc defects appear as isolated spots on the wafer surface. These localized defects often form due to single-point contamination or isolated equipment issues during processing. To mitigate Loc defects, contamination control and precise calibration of equipment are essential, alongside regular cleaning of workspaces."
     },
     {
         "id": "chunk_3",
-        "title": "Edge-Loc Defects (ID: 2)",
+        "title": "Edge-Loc Defects",
         "content": "Edge-Loc defects occur near the wafer\u2019s edge. They form due to uneven thermal distribution, edge handling stresses, or material flow inconsistencies at the periphery during processes such as chemical application or etching. To reduce Edge-Loc defects, precise alignment and control over material distribution at the wafer's edge are necessary, as is optimizing temperature stability near the edges."
     },
     {
         "id": "chunk_4",
-        "title": "Center Defects (ID: 3)",
+        "title": "Center Defects",
         "content": "Center defects, found at the wafer's center, result from central stress accumulation, uneven thermal effects, or mechanical pressure applied during the fabrication process. To prevent these defects, ensure temperature uniformity across the wafer and minimize stress points by balancing the load and equipment pressure on the wafer."
     },
     {
         "id": "chunk_5",
-        "title": "Edge-Ring Defects (ID: 4)",
+        "title": "Edge-Ring Defects",
         "content": "Edge-Ring defects appear as concentric rings near the wafer's edge, typically due to uneven distribution of chemicals or inconsistencies during deposition and etching processes. Edge-Ring defects can be mitigated by optimizing chemical application techniques, ensuring consistent flow and pressure, and controlling the alignment and motion of the applicator."
     },
     {
         "id": "chunk_6",
-        "title": "Scratch Defects (ID: 5)",
+        "title": "Scratch Defects",
         "content": "Scratch defects are physical abrasions on the wafer surface. These defects are commonly caused by mishandling, improper contact with equipment, or particulate contamination that creates abrasive points. Effective mitigation strategies include adhering to strict handling protocols, maintaining equipment in prime condition, and ensuring that no particles come into contact with the wafer."
     },
     {
         "id": "chunk_7",
-        "title": "Random Defects (ID: 6)",
+        "title": "Random Defects",
         "content": "Random defects are scattered across the wafer, often resulting from airborne contamination, process variability, or unpredictable environmental factors during fabrication. To reduce Random defects, manufacturers should implement strict contamination control protocols, ensure consistent processing conditions, and conduct root-cause analyses to identify underlying issues in the fabrication environment."
     },
     {
         "id": "chunk_8",
-        "title": "Near-full Defects (ID: 7)",
+        "title": "Near-full Defects",
         "content": "Near-full defects cover a large portion of the wafer, leading to considerable yield loss. They are usually caused by severe contamination, significant fabrication errors, or chemical misapplications. To prevent these defects, manufacturers must conduct immediate quality control inspections, enhance contamination prevention measures, and improve monitoring to catch early indicators of process failure."
     },
     {
         "id": "chunk_9",
-        "title": "Donut Defects (ID: 8)",
+        "title": "Donut Defects",
         "content": "Donut defects, which appear as donut-shaped rings, typically form due to non-uniform etching or deposition that creates a circular pattern. This can result from uneven material flow, stress concentration, or poor process calibration. Donut defects can be mitigated by ensuring consistent material distribution, balancing stress levels during processes, and using advanced etching techniques that offer precise control over material removal."
     },
     {

@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 import numpy as np
 from PIL import Image
-import shutil  # For saving the uploaded image temporarily
+import shutil
 import io
 import base64
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('Agg')  # Use a non-interactive backend for matplotlib
+matplotlib.use('Agg')
 
 from langchain_ollama import OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -31,8 +31,6 @@ import os
 import warnings
 from langchain.schema import Document, HumanMessage
 
-import fitz
-
 import sqlite3
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
@@ -43,14 +41,13 @@ from datetime import datetime, timedelta
 
 from typing import List
 
-# Constants for JWT
-SECRET_KEY = "keysec"  # Replace with a secure secret key
+
+SECRET_KEY = "keysec"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# Initialize FastAPI app
 app = FastAPI()
-# Add CORS middleware to allow all origins
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -230,7 +227,9 @@ llm = ChatOllama(model=local_model)
 QUERY_PROMPT = PromptTemplate(
     input_variables=["question", "context"],
     template="""You are SilicAI, a QnA Chatbot that helps users with semiconductor defect analysis and general knowledge.
+- Do no mention that you have ignored the context
 - Only greet of introduce if asked
+- If greetings are in context do not greet again
 - Do not mention the context unless it's directly relevant to the question.
 - Do not mention conversation history from context at all
 - In context if there is ignore context, ignore the part of the context before the ignore context mention.
@@ -253,26 +252,6 @@ Context: {context}
 Answer:""",
 )
 
-# QUERY_PROMPT = PromptTemplate(
-#     input_variables=["question", "context"],
-#     template="""You are SilicAI, a QnA Chatbot specializing in semiconductor defect analysis and general knowledge. 
-
-# Guidelines:
-# - Only greet or introduce yourself if the user asks.
-# - Do not mention prompts
-# - Use context only if directly relevant to the question; ignore it if it contains "ignore context" or if the user asks to skip it.
-# - For greetings or personal questions (e.g., "hello," "who are you"), provide a brief greeting or introduction.
-# - When asked about technical or document-related topics, use specific information from the context if relevant; otherwise, answer based on general knowledge.
-# - Always avoid repeating instructions or conversation rules in your response.
-
-# Question: {question}
-# Context: {context}
-# Answer:"""
-# )
-
-
-
-
 # Set up retriever
 retriever = MultiQueryRetriever.from_llm(
     vector_db.as_retriever(), 
@@ -288,9 +267,8 @@ class ChatRequest(BaseModel):
     question: str
     defect: str = ""
 
-# Process tokens for streaming response (only output the token content)
 async def process_tokens(stream, final_answer_list, formatted_question, conversation_history):
-    queue = Queue()
+    queue = asyncio.Queue()
 
     def run_stream():
         try:
@@ -299,16 +277,23 @@ async def process_tokens(stream, final_answer_list, formatted_question, conversa
                 token_text = getattr(token, 'content', None)
                 if token_text:
                     final_answer_list.append(token_text)  # Collect answer for conversation history
-                    queue.put_nowait(json.dumps({"token": token_text}) + "\n")
+                    # Use asyncio.run_coroutine_threadsafe to safely interact with the asyncio.Queue from a thread
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put(json.dumps({"token": token_text}) + "\n"),
+                        loop
+                    )
         except Exception as e:
-            queue.put_nowait(json.dumps({"error": str(e)}) + "\n")
+            asyncio.run_coroutine_threadsafe(
+                queue.put(json.dumps({"error": str(e)}) + "\n"),
+                loop
+            )
         finally:
-            queue.put_nowait(None)  # Signal the end of streaming
+            asyncio.run_coroutine_threadsafe(queue.put(None), loop)  # Signal the end of streaming
 
-    # Run the synchronous stream in a background thread
     loop = asyncio.get_event_loop()
     executor = ThreadPoolExecutor(max_workers=1)
-    await loop.run_in_executor(executor, run_stream)
+    # Start the background thread to process the stream
+    loop.run_in_executor(executor, run_stream)
 
     # Stream tokens to the client as they arrive
     while True:
@@ -323,16 +308,14 @@ async def process_tokens(stream, final_answer_list, formatted_question, conversa
         "answer": "".join(final_answer_list)  # Join tokens to create the full response
     })
 
-# Global variable to store the current defect type from classification
+# Global variables
+conversation_history = []
 current_defect_type = None
 
 # Define the /chat endpoint with updated context to include current_defect_type
 @app.post("/chat")
 async def chat_with_pdf(request: ChatRequest):
-    """
-    Endpoint for chatting with the PDF.
-    Accepts a question and defect information, and returns an answer from the PDF.
-    """
+
     formatted_question = request.question.strip()
     global conversation_history, current_defect_type
 
@@ -360,6 +343,7 @@ async def chat_with_pdf(request: ChatRequest):
         # Initialize a list to capture the final answer text for storage
         final_answer_list = []
 
+
         # Return streaming response to the client
         response = StreamingResponse(
             process_tokens(stream, final_answer_list, formatted_question, conversation_history),
@@ -375,11 +359,10 @@ async def chat_with_pdf(request: ChatRequest):
 # New endpoint to retrieve and optionally purge the conversation history
 @app.get("/history")
 async def get_conversation_history(purge: bool = Query(False)):
-    """
-    Endpoint to retrieve the entire conversation history for debugging purposes.
-    If 'purge' is set to true, it will clear the history after returning it.
-    """
     global conversation_history, current_defect_type
+
+    # Debugging: Capture the current state of history and defect type
+    print("Before purge:", conversation_history, current_defect_type)
 
     # Capture the current history and defect type to return
     history = {
@@ -389,8 +372,10 @@ async def get_conversation_history(purge: bool = Query(False)):
 
     # Clear the history and defect type if purge is set to true
     if purge:
-        conversation_history = []
-        current_defect_type = None
+        # Ensure that you clear the history correctly
+        conversation_history.clear()  # Clears the list
+        current_defect_type = None   # Resets the defect type
+        print("After purge:", conversation_history, current_defect_type)
 
     return JSONResponse(content=history)
 
@@ -439,15 +424,6 @@ intensity_map_reverse = {0: 0, 128: 1, 255: 2}
 
 # Function to convert image back to wafer map (numpy array)
 def image_to_wafer_map(image_path):
-    """
-    Converts a grayscale image to a wafer map with intensities 0, 1, 2.
-    
-    Args:
-        image_path (str): Path to the input grayscale image.
-    
-    Returns:
-        np.ndarray: Wafer map with values 0, 1, 2.
-    """
     wafer_image = Image.open(image_path).convert("L")  # Convert to grayscale
     wafer_map = np.array(wafer_image)
     
@@ -457,16 +433,6 @@ def image_to_wafer_map(image_path):
 
 # Function to classify the wafer map using the model
 def classify_wafer_map(wafer_map_tensor, model):
-    """
-    Classifies the wafer map to identify the defect type.
-    
-    Args:
-        wafer_map_tensor (torch.Tensor): Tensor representation of the wafer map.
-        model (nn.Module): Classification model.
-    
-    Returns:
-        int: Defect type index.
-    """
     if torch.cuda.is_available():
         wafer_map_tensor = wafer_map_tensor.cuda()
     with torch.no_grad():
@@ -490,31 +456,12 @@ defect_mapping = {
 
 # Function to convert image to tensor for classification
 def image_to_tensor_classification(image_path):
-    """
-    Converts a wafer map image to a PyTorch tensor.
-    
-    Args:
-        image_path (str): Path to the input image.
-    
-    Returns:
-        torch.Tensor: Tensor suitable for the classification model.
-    """
     wafer_map = image_to_wafer_map(image_path)
     wafer_map_tensor = torch.tensor(wafer_map, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: [1, 1, H, W]
     return wafer_map_tensor
 
 # Function to classify the wafer map
 def classify_wafer_map_function(wafer_map_tensor, model):
-    """
-    Classifies the wafer map to identify the defect type.
-    
-    Args:
-        wafer_map_tensor (torch.Tensor): Tensor representation of the wafer map.
-        model (nn.Module): Classification model.
-    
-    Returns:
-        int: Defect type index.
-    """
     if torch.cuda.is_available():
         wafer_map_tensor = wafer_map_tensor.cuda()
     with torch.no_grad():
@@ -525,15 +472,7 @@ def classify_wafer_map_function(wafer_map_tensor, model):
 
 # Function to convert wafer map to image (for visualization)
 def wafer_map_to_image(wafer_map):
-    """
-    Converts a wafer map with values 0, 1, 2 to a grayscale image with intensities 0, 128, 255.
-    
-    Args:
-        wafer_map (np.ndarray): Wafer map with values 0, 1, 2.
-    
-    Returns:
-        PIL.Image.Image: Grayscale image.
-    """
+
     intensity_map = {0: 0, 1: 128, 2: 255}
     wafer_map_visual = np.vectorize(intensity_map.get)(wafer_map)
     wafer_map_visual = wafer_map_visual.astype(np.uint8)
@@ -587,31 +526,14 @@ if torch.cuda.is_available():
 
 # Function to convert image to tensor for segmentation
 def image_to_tensor(image_path):
-    """
-    Converts a wafer map image to a PyTorch tensor.
-    
-    Args:
-        image_path (str): Path to the input image.
-    
-    Returns:
-        torch.Tensor: Tensor suitable for the segmentation model.
-    """
+
     wafer_map = image_to_wafer_map(image_path)
     wafer_map_tensor = torch.tensor(wafer_map, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: [1, 1, H, W]
     return wafer_map_tensor
 
 # Function to perform segmentation
 def perform_segmentation(tensor, model):
-    """
-    Performs segmentation on the input tensor using the provided model.
-    
-    Args:
-        tensor (torch.Tensor): Input tensor.
-        model (nn.Module): Segmentation model.
-    
-    Returns:
-        np.ndarray: Segmented map.
-    """
+
     if torch.cuda.is_available():
         tensor = tensor.cuda()
     with torch.no_grad():
@@ -621,16 +543,7 @@ def perform_segmentation(tensor, model):
 
 # Function to create overlay image
 def create_overlay_image(original_image_path, segmented_map):
-    """
-    Creates an overlay image by combining the original wafer map and the segmented map.
-    
-    Args:
-        original_image_path (str): Path to the original grayscale image.
-        segmented_map (np.ndarray): Segmented map with float values between 0 and 1.
-    
-    Returns:
-        str: Base64-encoded PNG image.
-    """
+
     wafer_map = np.array(Image.open(original_image_path).convert("L"))  # Original grayscale image
 
     # Create a binary mask from the segmented map
@@ -657,16 +570,7 @@ def create_overlay_image(original_image_path, segmented_map):
 # Define the /dl endpoint for segmentation
 @app.post("/dl")
 async def segment_image(image: UploadFile = File(...)):
-    """
-    Endpoint for image segmentation.
-    Accepts an uploaded wafer map image, performs segmentation, and returns the annotated image.
-    
-    Args:
-        image (UploadFile): Uploaded image file.
-    
-    Returns:
-        JSONResponse: Contains a message and the base64-encoded segmented image.
-    """
+
     try:
         # Validate file type
         if not image.content_type.startswith('image/'):
@@ -705,16 +609,7 @@ async def segment_image(image: UploadFile = File(...)):
 
 # Function to classify the wafer map
 def classify_wafer_map_function(wafer_map_tensor, model):
-    """
-    Classifies the wafer map to identify the defect type.
-    
-    Args:
-        wafer_map_tensor (torch.Tensor): Tensor representation of the wafer map.
-        model (nn.Module): Classification model.
-    
-    Returns:
-        int: Defect type index.
-    """
+
     if torch.cuda.is_available():
         wafer_map_tensor = wafer_map_tensor.cuda()
     with torch.no_grad():
@@ -725,15 +620,7 @@ def classify_wafer_map_function(wafer_map_tensor, model):
 
 # Function to convert image to tensor for classification
 def image_to_tensor_classification(image_path):
-    """
-    Converts a wafer map image to a PyTorch tensor for classification.
-    
-    Args:
-        image_path (str): Path to the input image.
-    
-    Returns:
-        torch.Tensor: Tensor suitable for the classification model.
-    """
+
     wafer_map = image_to_wafer_map(image_path)
     wafer_map_tensor = torch.tensor(wafer_map, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: [1, 1, H, W]
     return wafer_map_tensor
@@ -741,17 +628,8 @@ def image_to_tensor_classification(image_path):
 # Modify the /ml endpoint to update the current_defect_type
 @app.post("/ml")
 async def classify_image(image: UploadFile = File(...)):
-    """
-    Endpoint for image classification.
-    Accepts an uploaded wafer map image, classifies it, and returns the defect type.
-    
-    Args:
-        image (UploadFile): Uploaded image file.
-    
-    Returns:
-        JSONResponse: Contains the defect type and name.
-    """
-    global current_defect_type  # Use the global variable to store the latest defect type
+
+    global current_defect_type
 
     try:
         # Validate file type

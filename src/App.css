@@ -99,11 +99,11 @@ body {
   padding: 0; /* Remove padding */
   margin-left: 15px;
   border-radius: 0; /* Remove border-radius */
-  color: #ffffff; /* Optional: Change text color for bot messages */
+  color: #ffffff;
   align-self: flex-start;
 }
 
-/* Image styling (separate from the message) */
+/* Image styling */
 .message-image {
   max-width: 100%;
   max-height: 200px;
@@ -192,11 +192,16 @@ body {
     margin-top: 10px;
   }
 }
-/* Logout button */
-.logout-button {
+.button-container {
   position: absolute;
   top: 20px;
   right: 20px;
+  display: flex;
+  gap: 10px; /* Space between the buttons */
+  z-index: 10;
+}
+
+.logout-button, .purge-button {
   background-color: #ff4b4b;
   color: white;
   border: none;
@@ -206,12 +211,12 @@ body {
   font-size: 1rem;
   font-weight: bold;
   transition: background-color 0.3s ease;
-  z-index: 10;
 }
 
-.logout-button:hover {
+.logout-button:hover, .purge-button:hover {
   background-color: #e04040;
 }
+
 
 /* Dropdown container */
 .action-selector {
@@ -281,21 +286,21 @@ body {
   position: relative;
   display: flex;
   align-items: center;
-  width: 100%; /* Adjust this if you need to limit the width */
-  max-width: 600px; /* Set max width for the input field if needed */
+  width: 100%;
+  max-width: 600px;
 }
 
 .input-container input[type="text"] {
-  padding-left: 10px; /* Padding for the clip icon */
-  width: 100%; /* Ensures the input takes the full container width */
-  padding-right: 10px; /* Optional, adds space at the right end */
-  height: 40px; /* Adjust height if desired */
-  font-size: 1em; /* Adjust font size */
+  padding-left: 10px;
+  width: 100%;
+  padding-right: 10px;
+  height: 40px;
+  font-size: 1em;
 }
 
 
 .input-container input[type="text"] {
-  padding-right: 30px; /* Add padding to avoid overlap with the clip icon */
+  padding-right: 30px;
   width: 100%;
   max-width: 600px;
 }

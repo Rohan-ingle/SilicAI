@@ -1,9 +1,10 @@
-// src/App.js
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom'; // Import useNavigate for navigation
+import { useNavigate } from 'react-router-dom';
 import './App.css';
 import Login from './Login';
-import { marked } from 'marked'; // Import marked library for markdown parsing
+import { marked } from 'marked';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
 // Function to convert markdown to HTML
 const parseMarkdown = (markdownText) => marked(markdownText);
@@ -18,19 +19,54 @@ function App() {
   const chatHistoryRef = useRef(null);
   const scrollButtonRef = useRef(null);
   const sendButtonRef = useRef(null);
-  const navigate = useNavigate(); // Initialize navigate hook
+  const navigate = useNavigate();
 
   // Handle Login and Logout
   const handleLogin = (accessToken) => {
     setToken(accessToken);
     localStorage.setItem('token', accessToken);
-    navigate('/app'); // Navigate to /app after login
+    navigate('/app');
   };
 
   const handleLogout = () => {
     localStorage.removeItem('token');
-    setToken(null); // Clear token in state
-    navigate('/'); // Redirect to LandingPage
+    setToken(null);
+    navigate('/');
+  };
+
+  const purgeHistory = async () => {
+    try {
+      // Call the backend API to purge history
+      const response = await fetch('https://distinctly-thorough-pelican.ngrok-free.app/history?purge=True', {
+        method: 'GET',
+      });
+  
+      // Check if the response is okay
+      if (!response.ok) {
+        throw new Error('Failed to purge history');
+      }
+  
+      // Show success toast
+      toast.success('Successfully purged memory.', {
+        position: "top-right",
+        autoClose: 2500,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+      });
+    } catch (error) {
+      console.error('Error during history purge:', error);
+      toast.error('Error Purging History.', {
+        position: "top-right",
+        autoClose: 2500,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+      });
+      throw error;
+    }
   };
 
   const scrollToBottom = () => {
@@ -42,7 +78,15 @@ function App() {
 
   const handleSendMessage = async () => {
     if ((action === 'chat' && !input.trim()) || ((action === 'classify' || action === 'segment') && !image)) {
-      alert('Please enter a message or upload an image based on the selected action.');
+      // Use toast to notify the user instead of alert
+      toast.error('Please enter a message or upload an image based on the selected action.', {
+        position: "top-right",
+        autoClose: 2500,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+      });
       return;
     }
 
@@ -61,6 +105,10 @@ function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ question: input, chat_history: chatHistory }),
         });
+
+        if (!response.ok) {
+          throw new Error(`Server error: ${response.statusText}`);
+        }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8');
@@ -87,6 +135,14 @@ function App() {
                 if (parsed.error) throw new Error(parsed.error);
               } catch (err) {
                 console.error('Error parsing chunk:', err);
+                toast.error(`Error parsing response: ${err.message}`, {
+                  position: "top-right",
+                  autoClose: 2500,
+                  hideProgressBar: false,
+                  closeOnClick: true,
+                  pauseOnHover: true,
+                  draggable: true,
+                });
               }
             }
           }
@@ -99,17 +155,34 @@ function App() {
           : 'https://distinctly-thorough-pelican.ngrok-free.app/dl';
 
         const response = await fetch(endpoint, { method: 'POST', body: formData });
+
+        if (!response.ok) {
+          throw new Error(`Server error: ${response.statusText}`);
+        }
+
         const result = await response.json();
-        
+
+        if (result.error) {
+          throw new Error(result.error);
+        }
+
         setMessages((prevMessages) => {
           const updatedMessages = [...prevMessages];
-          updatedMessages[updatedMessages.length - 1].content = parseMarkdown(`**${result.message || result.defect_name || result.error}**`);
+          updatedMessages[updatedMessages.length - 1].content = parseMarkdown(`**${result.message || result.defect_name}**`);
           if (result.segmented_image) updatedMessages[updatedMessages.length - 1].segmentedImage = `data:image/png;base64,${result.segmented_image}`;
           return updatedMessages;
         });
       }
     } catch (error) {
       console.error('Error fetching response:', error);
+      toast.error('Error fetching response. Please try again.', {
+        position: "top-right",
+        autoClose: 2500,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+      });
       setMessages((prevMessages) => [...prevMessages, { role: 'bot', content: parseMarkdown('**Error fetching response. Please try again.**') }]);
     } finally {
       setInput('');
@@ -143,7 +216,15 @@ function App() {
     if (file && (file.type === 'image/jpeg' || file.type === 'image/png' || file.type === 'image/jpg')) {
       setImage(file);
     } else {
-      alert('Please upload a valid image file (JPG, PNG, JPEG).');
+      // Use toast to notify the user instead of alert
+      toast.error('Please upload a valid image file (JPG, PNG, JPEG).', {
+        position: "top-right",
+        autoClose: 5000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+      });
     }
   };
 
@@ -151,8 +232,13 @@ function App() {
 
   return (
     <div className="App">
-      <div className="header">
+      {/* Toast Container */}
+      <ToastContainer />
+
+      <div className="button-container">
         <button onClick={handleLogout} className="logout-button">Logout</button>
+
+        <button onClick={purgeHistory} className="purge-button">Purge Memory</button>
       </div>
 
       <div className="chat-container">
@@ -174,24 +260,22 @@ function App() {
         </div>
 
         <div className="chat-input">
-        <div className="input-container">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Type your message..."
-          />
-          <label htmlFor="file-upload" className="clip-logo">🔗</label>
-        </div>
+          <div className="input-container">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Type your message..."
+            />
+            <label htmlFor="file-upload" className="clip-logo">🔗</label>
+          </div>
 
-          
           <select value={action} onChange={(e) => setAction(e.target.value)} className="action-selector">
             <option value="chat">Chat</option>
             <option value="classify">Classify</option>
             <option value="segment">Segment</option>
           </select>
-          {/* <label htmlFor="file-upload" className="clip-logo">📎</label> */}
           <input id="file-upload" type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
           <button onClick={handleSendMessage} ref={sendButtonRef} disabled={isBotTyping}>Send</button>
         </div>
