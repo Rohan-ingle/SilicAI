@@ -1,0 +1,11 @@
+Pillow
+langchain
+langchain-ollama
+langchain-community
+langchain-core
+fastapi
+uvicorn
+pydantic
+python-jose
+passlib[bcrypt]
+matplotlib

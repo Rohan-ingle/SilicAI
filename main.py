@@ -41,6 +41,10 @@ from datetime import datetime, timedelta
 
 from typing import List
 
+import logging
+
+logger = logging.getLogger("uvicorn")  # Using Uvicorn logger
+logger.setLevel(logging.DEBUG) 
 
 SECRET_KEY = "keysec"
 ALGORITHM = "HS256"
@@ -425,6 +429,7 @@ intensity_map_reverse = {0: 0, 128: 1, 255: 2}
 # Function to convert image back to wafer map (numpy array)
 def image_to_wafer_map(image_path):
     wafer_image = Image.open(image_path).convert("L")  # Convert to grayscale
+    wafer_image = wafer_image.resize((128,128)) 
     wafer_map = np.array(wafer_image)
     
     # Map 0, 128, 255 to 0, 1, 2 respectively using thresholding
@@ -514,7 +519,6 @@ class SegmentationModel(nn.Module):
 # Initialize the Segmentation Model
 segmentation_model = SegmentationModel()
 
-# Load the state dictionary (replace 'segmentation_model.pth' with your actual model path)
 SEGMENTATION_MODEL_PATH = "best_model.pth"
 segmentation_model.load_state_dict(torch.load(SEGMENTATION_MODEL_PATH, map_location=torch.device('cpu')))
 segmentation_model.eval()
@@ -542,68 +546,135 @@ def perform_segmentation(tensor, model):
     return segmented_map
 
 # Function to create overlay image
+# def create_overlay_image(original_image_path, segmented_map):
+
+#     wafer_map = np.array(Image.open(original_image_path).convert("L"))  # Original grayscale image
+
+#     # Create a binary mask from the segmented map
+#     binary_mask = (segmented_map > 0.5).astype(np.uint8)  # Threshold at 0.5
+
+#     # Create an RGB image for overlay
+#     overlay_blue = np.zeros((*wafer_map.shape, 3), dtype=np.uint8)
+#     overlay_blue[..., 2] = binary_mask * 255  # Blue channel
+
+#     # Combine original image and overlay
+#     fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+#     ax.imshow(wafer_map, cmap='gray')
+#     ax.imshow(overlay_blue, alpha=0.3)
+#     ax.axis("off")
+
+#     # Save the figure to a buffer
+#     buf = io.BytesIO()
+#     plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+#     plt.close(fig)
+#     buf.seek(0)
+#     overlay_image = base64.b64encode(buf.read()).decode('utf-8')
+#     return overlay_image
+
 def create_overlay_image(original_image_path, segmented_map):
+    wafer_map = np.array(Image.open(original_image_path).convert("L"))
 
-    wafer_map = np.array(Image.open(original_image_path).convert("L"))  # Original grayscale image
+    segmented_map_resized = Image.fromarray((segmented_map * 255).astype(np.uint8)).resize(
+        wafer_map.shape[::-1], resample=Image.NEAREST
+    )
+    binary_mask = np.array(segmented_map_resized) > 127  # Convert resized map back to binary
 
-    # Create a binary mask from the segmented map
-    binary_mask = (segmented_map > 0.5).astype(np.uint8)  # Threshold at 0.5
-
-    # Create an RGB image for overlay
+    # Create an RGB overlay image
     overlay_blue = np.zeros((*wafer_map.shape, 3), dtype=np.uint8)
-    overlay_blue[..., 2] = binary_mask * 255  # Blue channel
+    overlay_blue[..., 2] = binary_mask * 255  # Add segmentation mask in blue channel
 
-    # Combine original image and overlay
+    # Combine the original image and overlay
     fig, ax = plt.subplots(1, 1, figsize=(5, 5))
-    ax.imshow(wafer_map, cmap='gray')
-    ax.imshow(overlay_blue, alpha=0.3)
+    ax.imshow(wafer_map, cmap='gray')  # Show original image
+    ax.imshow(overlay_blue, alpha=0.3)  # Overlay segmentation mask with transparency
     ax.axis("off")
 
-    # Save the figure to a buffer
+    # Save the result to a buffer
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+    plt.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
     plt.close(fig)
     buf.seek(0)
-    overlay_image = base64.b64encode(buf.read()).decode('utf-8')
+
+    # Convert the result to base64
+    overlay_image = base64.b64encode(buf.read()).decode("utf-8")
     return overlay_image
 
-# Define the /dl endpoint for segmentation
+
+
+# # Define the /dl endpoint for segmentation
+# @app.post("/dl")
+# async def segment_image(image: UploadFile = File(...)):
+
+#     try:
+#         # Validate file type
+#         if not image.content_type.startswith('image/'):
+#             return JSONResponse(content={"error": "Invalid file type. Please upload an image."}, status_code=400)
+        
+#         # Save the uploaded file temporarily
+#         temp_file_path = "temp_uploaded_image_segment.png"
+#         with open(temp_file_path, "wb") as buffer:
+#             shutil.copyfileobj(image.file, buffer)
+
+#         # Convert image to tensor
+#         wafer_map_tensor = image_to_tensor(temp_file_path)
+
+#         # Perform segmentation
+#         segmented_map = perform_segmentation(wafer_map_tensor, segmentation_model)
+
+#         # Create overlay image
+#         overlay_image_base64 = create_overlay_image(temp_file_path, segmented_map)
+
+#         # Remove the temporary file
+#         os.remove(temp_file_path)
+
+#         # Return the base64 image
+#         result = {
+#             "message": "I have segmented and annotated the input wafer map.",
+#             "segmented_image": overlay_image_base64
+#         }
+#         return result
+#     except Exception as e:
+#         # In case of any errors, ensure the temporary file is removed
+#         if os.path.exists(temp_file_path):
+#             os.remove(temp_file_path)
+#         return JSONResponse(content={"error": str(e)}, status_code=500)
+
 @app.post("/dl")
 async def segment_image(image: UploadFile = File(...)):
-
     try:
-        # Validate file type
+        logger.debug("Starting segmentation...")
+        
         if not image.content_type.startswith('image/'):
+            logger.error("Invalid file type")
             return JSONResponse(content={"error": "Invalid file type. Please upload an image."}, status_code=400)
         
-        # Save the uploaded file temporarily
         temp_file_path = "temp_uploaded_image_segment.png"
         with open(temp_file_path, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
+        logger.debug(f"Image saved to {temp_file_path}")
 
-        # Convert image to tensor
         wafer_map_tensor = image_to_tensor(temp_file_path)
+        logger.debug(f"Image converted to tensor: {wafer_map_tensor.shape}")
 
-        # Perform segmentation
         segmented_map = perform_segmentation(wafer_map_tensor, segmentation_model)
+        logger.debug("Segmentation completed")
 
-        # Create overlay image
         overlay_image_base64 = create_overlay_image(temp_file_path, segmented_map)
+        logger.debug("Overlay image created")
 
-        # Remove the temporary file
         os.remove(temp_file_path)
+        logger.debug(f"Temporary file {temp_file_path} removed")
 
-        # Return the base64 image
-        result = {
-            "message": "I have segmented and annotated the input wafer map.",
-            "segmented_image": overlay_image_base64
+        return {
+            "message": "Segmentation completed successfully",
+            "segmented_image": overlay_image_base64,
         }
-        return result
     except Exception as e:
-        # In case of any errors, ensure the temporary file is removed
+        logger.exception("Error in /dl endpoint")
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
 # ----------------------- Classification Part -----------------------
 

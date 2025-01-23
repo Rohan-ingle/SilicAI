@@ -1,3 +1,4 @@
+.gitignore
 # Logs
 logs
 *.log
@@ -35,3 +36,5 @@ serveo.bat
 
 # Test Models
 users.db
+
+defect_images
